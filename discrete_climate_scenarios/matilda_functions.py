@@ -294,7 +294,7 @@ class CMIPDownloader:
 
     def download(self):
         """Runs a subset routine for CMIP6 data on GEE servers to create ee.FeatureCollections for all years in
-        the requested period. Downloads individual years in parallel processes to increase the download time."""
+        the requested period. Downloads individual years in parallel processes to decrease the download time."""
 
         print('Initiating download request for NEX-GDDP-CMIP6 data from ' +
               str(self.starty) + ' to ' + str(self.endy) + '.')
