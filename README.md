@@ -46,10 +46,13 @@ To install the Discrete Climate Scenarios package, follow these steps:
         load_backup = False
         start_region_index = 0
         start_station_index = 0
+        # Optional for single-file CSV input:
+        single_station_lat = 41.97
+        single_station_lon = 70.45
         ```
 
-2. Prepare your input directory structure:
-    - The input directory should contain subdirectories for each region. Each region subdirectory should have two types of `.xlsx` files: precipitation data and temperature data. Each `.xlsx` file should have three time columns (year, month, day) and one column per weather station.
+2. Prepare your input data:
+    - **Option A (existing structure):** The input directory should contain subdirectories for each region. Each region subdirectory should have two types of `.xlsx` files: precipitation data and temperature data. Each `.xlsx` file should have three time columns (year, month, day) and one column per weather station.
     - Additionally, each region subdirectory should contain a `aws_coords.csv` file with the station coordinates, formatted as follows:
         ```csv
         Name,Latitude,Longitude
@@ -58,6 +61,14 @@ To install the Discrete Climate Scenarios package, follow these steps:
         Oygaing,42.15526200000,70.86313900000
         Chimyon,41.52359600000,70.02613100000
         ```
+    - **Option B (single station CSV):** Set `input_dir` to a single `.csv` file containing:
+        ```csv
+        date,temp,prec
+        1951-01-01,-4.1,1.3
+        1951-01-02,-2.8,0.0
+        1951-01-03,-1.7,0.1
+        ```
+      The columns `date,temp,prec` are required. For spatial buffering and CMIP6 processing, set `single_station_lat` and `single_station_lon` in `config.ini`.
 
 3. Run the main script:
     ```bash

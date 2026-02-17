@@ -22,7 +22,32 @@ import pickle
 warnings.filterwarnings("ignore")
 
 
-def read_station_data(directory_path):
+def read_station_data(directory_path, single_station_coords=None):
+    if os.path.isfile(directory_path) and directory_path.lower().endswith('.csv'):
+        single_df = pd.read_csv(directory_path)
+        required_cols = {'date', 'temp', 'prec'}
+        missing_cols = required_cols.difference(single_df.columns)
+        if missing_cols:
+            raise ValueError(
+                'Single-file CSV input must include the columns: date,temp,prec. '
+                f'Missing columns: {sorted(missing_cols)}'
+            )
+
+        single_df['date'] = pd.to_datetime(single_df['date'])
+        single_df.set_index('date', inplace=True)
+        single_df['temp'] = pd.to_numeric(single_df['temp'], errors='coerce') + 273.15
+        single_df['prec'] = pd.to_numeric(single_df['prec'], errors='coerce').fillna(0)
+
+        station_name = os.path.splitext(os.path.basename(directory_path))[0]
+        region_name = 'single_region'
+        region_data = {region_name: {station_name: single_df[['temp', 'prec']]}}
+
+        station_coords = {region_name: {}}
+        if single_station_coords is not None:
+            station_coords[region_name][station_name] = single_station_coords
+
+        return region_data, station_coords
+
     region_data = {}
     station_coords = {}
 
@@ -1232,7 +1257,8 @@ def summary_dict(results_dict: dict):
 
 
 class StationPreprocessor:
-    def __init__(self, input_dir, output_dir, buffer_radius=1000, show=True, sd_factor=2):
+    def __init__(self, input_dir, output_dir, buffer_radius=1000, show=True, sd_factor=2,
+                 single_station_coords=None):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.buffer_radius = buffer_radius
@@ -1240,9 +1266,15 @@ class StationPreprocessor:
         self.sd_factor = sd_factor
         self.gis_dir = self.output_dir + 'GIS/'
         self.gis_file = self.gis_dir + 'station_gis.gpkg'
+        self.single_station_coords = single_station_coords
 
     def read_data_and_create_buffers(self):
-        self.region_data, self.station_coords = read_station_data(self.input_dir)
+        self.region_data, self.station_coords = read_station_data(self.input_dir, self.single_station_coords)
+        if not any(stations for stations in self.station_coords.values()):
+            raise ValueError(
+                'No station coordinates found. For directory-based input, provide aws_coords.csv per region. '
+                'For single CSV input, set single_station_lat and single_station_lon in config.ini.'
+            )
         if not os.path.exists(self.gis_dir):
             os.makedirs(self.gis_dir)
         self.buffered_stations = create_buffer(self.station_coords, self.gis_file, buffer_radius=self.buffer_radius,

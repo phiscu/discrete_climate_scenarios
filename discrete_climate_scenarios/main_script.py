@@ -26,11 +26,21 @@ def main():
     load_backup = settings.getboolean('load_backup')
     start_region_index = settings.getint('start_region_index')
     start_station_index = settings.getint('start_station_index')
+    single_station_lat = settings.getfloat('single_station_lat', fallback=None)
+    single_station_lon = settings.getfloat('single_station_lon', fallback=None)
+
+    if (single_station_lat is None) ^ (single_station_lon is None):
+        raise ValueError('Please set both single_station_lat and single_station_lon in config.ini, or neither.')
+
+    single_station_coords = None
+    if single_station_lat is not None and single_station_lon is not None:
+        single_station_coords = (single_station_lon, single_station_lat)
 
     # Preprocessing
     print('Initiating preprocessing routine')
     preprocessor = mf.StationPreprocessor(input_dir=input_dir, output_dir=output_dir, buffer_radius=buffer_radius,
-                                          show=show, sd_factor=sd_factor)
+                                          show=show, sd_factor=sd_factor,
+                                          single_station_coords=single_station_coords)
     preprocessor.full_preprocessing()
     print('Set up preprocessing routine for target directory!')
 
