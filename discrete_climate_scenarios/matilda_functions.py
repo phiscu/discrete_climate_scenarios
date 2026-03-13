@@ -1182,6 +1182,62 @@ def pp_matrix(original, target, corrected, scenario=None, nrow=7, ncol=5, precip
         plt.show()
 
 
+def to_cnp_dataframe(index, temperature_series, precipitation_series, climate_id, monthly=False):
+    cnp_df = pd.DataFrame({
+        'climate_id': climate_id,
+        'dd': '' if monthly else index.day,
+        'mm': index.month,
+        'yr': index.year,
+        'temperature': temperature_series,
+        'precipitation': precipitation_series
+    })
+    return cnp_df
+
+
+def write_cnp_output(temp_dict: dict, prec_dict: dict, output: str, climate_id: int, ndigits: int = 3):
+    cnp_base_dir = f'{output}posterior/CNP-Input/'
+    os.makedirs(cnp_base_dir, exist_ok=True)
+
+    scenario_map = {
+        'SSP2': ('SSP2_adjusted', 'SSP2_adjusted'),
+        'SSP5': ('SSP5_adjusted', 'SSP5_adjusted')
+    }
+
+    for scenario, (temp_key, prec_key) in scenario_map.items():
+        temp_df = temp_dict[temp_key]
+        prec_df = prec_dict[prec_key]
+
+        scenario_dir = os.path.join(cnp_base_dir, scenario)
+        os.makedirs(scenario_dir, exist_ok=True)
+
+        shared_members = sorted(set(temp_df.columns).intersection(set(prec_df.columns)))
+
+        for member in shared_members:
+            daily_temp = (temp_df[member] - 273.15).round(ndigits)
+            daily_prec = prec_df[member].round(ndigits)
+
+            daily_cnp = to_cnp_dataframe(
+                index=daily_temp.index,
+                temperature_series=daily_temp.values,
+                precipitation_series=daily_prec.values,
+                climate_id=climate_id,
+                monthly=False
+            )
+            daily_cnp.to_csv(os.path.join(scenario_dir, f'{member}_daily.csv'), index=False)
+
+            monthly_temp = daily_temp.resample('M').mean().round(ndigits)
+            monthly_prec = daily_prec.resample('M').sum().round(ndigits)
+            monthly_cnp = to_cnp_dataframe(
+                index=monthly_temp.index,
+                temperature_series=monthly_temp.values,
+                precipitation_series=monthly_prec.values,
+                climate_id=climate_id,
+                monthly=True
+            )
+            monthly_cnp.to_csv(os.path.join(scenario_dir, f'{member}_monthly.csv'), index=False)
+
+
+
 def write_output(adj_dict: dict, output: str, station: str, starty: str, endy: str, type: str, ndigits: int=3):
     """
     Writes the full output of the adjusted dictionary to CSV files. Variable name is determined based on the mean value
@@ -1310,7 +1366,7 @@ class StationPreprocessor:
 
 class ClimateScenarios:
     def __init__(self, output, region_data, station, buffer_file, download=False, load_backup=True, show=True,
-                 starty=1979, endy=2100, processes=5):
+                 starty=1979, endy=2100, processes=5, cnp_format=True, cnp_climate_id=999):
         self.output = output
         self.download = download
         self.load_backup = load_backup
@@ -1322,6 +1378,8 @@ class ClimateScenarios:
         self.region_data = region_data
         self.processes = processes
         self.aws = search_dict(self.region_data, self.station)
+        self.cnp_format = cnp_format
+        self.cnp_climate_id = cnp_climate_id
 
     def cmip6_data_processing(self):
         cmip_dir = f'{self.output}raw/'
@@ -1405,6 +1463,10 @@ class ClimateScenarios:
         prec_summary = summary_dict(self.prec_cmip)
         write_output(temp_summary, self.output, self.station, self.starty, self.endy, type='summary')
         write_output(prec_summary, self.output, self.station, self.starty, self.endy, type='summary')
+
+        if self.cnp_format:
+            write_cnp_output(self.temp_cmip, self.prec_cmip, self.output, climate_id=self.cnp_climate_id)
+
         print(f'Output files for "{self.station}" written.')
 
     def complete_workflow(self):
