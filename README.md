@@ -46,6 +46,8 @@ To install the Discrete Climate Scenarios package, follow these steps:
         load_backup = False
         start_region_index = 0
         start_station_index = 0
+        cnp_format = True
+        cnp_climate_id = 999
         # Optional for single-file CSV input:
         single_station_lat = 41.97
         single_station_lon = 70.45
@@ -74,6 +76,20 @@ To install the Discrete Climate Scenarios package, follow these steps:
     ```bash
     python main.py
     ```
+
+
+4. Optional CNP export format:
+    - When `cnp_format = True`, the workflow writes additional files to:
+      `posterior/CNP-Input/<scenario>/`
+    - Scenarios exported: `SSP2` and `SSP5` (bias-adjusted outputs).
+    - For each ensemble member, two files are created:
+      - `<ensemble_member>_daily.csv`
+      - `<ensemble_member>_monthly.csv`
+    - The CSV columns are:
+      `climate_id,dd,mm,yr,temperature,precipitation`
+    - `climate_id` is taken from `cnp_climate_id` and repeated in every row.
+    - `temperature` is exported in °C, `precipitation` in mm.
+    - For monthly files, `dd` is empty.
 
 ## Google Earth Engine
 

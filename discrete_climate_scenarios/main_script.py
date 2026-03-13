@@ -28,6 +28,8 @@ def main():
     start_station_index = settings.getint('start_station_index')
     single_station_lat = settings.getfloat('single_station_lat', fallback=None)
     single_station_lon = settings.getfloat('single_station_lon', fallback=None)
+    cnp_format = settings.getboolean('cnp_format', fallback=True)
+    cnp_climate_id = settings.getint('cnp_climate_id', fallback=999)
 
     if (single_station_lat is None) ^ (single_station_lon is None):
         raise ValueError('Please set both single_station_lat and single_station_lon in config.ini, or neither.')
@@ -66,7 +68,8 @@ def main():
                 instance = mf.ClimateScenarios(output=f'{preprocessor.output_dir}{region}/{station}/',
                                                region_data=preprocessor.region_data, station=station, download=download,
                                                load_backup=load_backup, show=show, buffer_file=preprocessor.gis_file,
-                                               processes=processes)
+                                               processes=processes, cnp_format=cnp_format,
+                                               cnp_climate_id=cnp_climate_id)
                 instance.complete_workflow()
             except Exception as e:
                 print(f"Error occurred for station {station}: {e}")
