@@ -880,7 +880,7 @@ def dict_to_pickle(dic, target_path):
         pickle.dump(dic, f)
 
 
-def cmip_plot(ax, df, target, title=None, precip=False, intv_sum='M', intv_mean='10Y',
+def cmip_plot(ax, df, target, title=None, precip=False, intv_sum='ME', intv_mean='10Y',
               target_label='Target', show_target_label=False, rolling=None):
     """Resamples and plots climate model and target data."""
     if intv_mean == '10Y' or intv_mean == '5Y' or intv_mean == '20Y':
@@ -907,7 +907,7 @@ def cmip_plot(ax, df, target, title=None, precip=False, intv_sum='M', intv_mean=
     ax.grid(True)
 
 
-def cmip_plot_combined(data, target, title=None, precip=False, intv_sum='M', intv_mean='10Y',
+def cmip_plot_combined(data, target, title=None, precip=False, intv_sum='ME', intv_mean='10Y',
                        target_label='Target', show=False, filename=None, out_dir='./', rolling=None):
     """Combines multiple subplots of climate data in different scenarios before and after bias adjustment.
     Shows target data for comparison"""
@@ -943,7 +943,7 @@ def cmip_plot_combined(data, target, title=None, precip=False, intv_sum='M', int
             plt.show()
 
 
-def df2long(df, intv_sum='M', intv_mean='Y', precip=False):
+def df2long(df, intv_sum='ME', intv_mean='YE', precip=False):
     """Resamples dataframes and converts them into long format to be passed to seaborn.lineplot()."""
 
     if precip:
@@ -957,7 +957,7 @@ def df2long(df, intv_sum='M', intv_mean='Y', precip=False):
     return df
 
 
-def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', figsize=(10, 6), site_label:str=None,
+def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='ME', intv_mean='YE', figsize=(10, 6), site_label:str=None,
                        target_label='ERA5L', show=True, out_dir='./', filename='cmip6_ensemble'):
     """
     Plots the multi-model mean of climate scenarios including the 90% confidence interval.
@@ -971,9 +971,9 @@ def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', 
     precip: bool
         If True, plot the mean precipitation. If False, plot the mean temperature. Default is False.
     intv_sum: str
-        Interval for precipitation sums. Default is monthly ('M').
+        Interval for precipitation sums. Default is monthly ('ME').
     intv_mean: str
-        Interval for the mean of temperature data or precipitation sums. Default is annual ('Y').
+        Interval for the mean of temperature data or precipitation sums. Default is annual ('YE').
     figsize: tuple
         Figure size for the plot. Default is (10,6).
     show: bool
@@ -1000,9 +1000,9 @@ def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', 
             df = df2long(cmip[i], intv_sum=intv_sum, intv_mean=intv_mean, precip=True)
             sns.lineplot(data=df, x='TIMESTAMP', y='prec', color=col_dict[i])
         axis.set(xlabel='Year', ylabel='Precipitation [mm]')
-        if intv_sum == 'M':
+        if intv_sum == 'ME':
             figure.suptitle(site_label + 'Ensemble Mean of Monthly Precipitation', fontweight='bold')
-        elif intv_sum == 'Y':
+        elif intv_sum == 'YE':
             figure.suptitle(site_label + 'Ensemble Mean of Annual Precipitation', fontweight='bold')
         target_plot = axis.plot(target.resample(intv_sum).sum(), linewidth=1.5, c='black',
                                 label=target_label, linestyle='dashed')
@@ -1013,9 +1013,9 @@ def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', 
         axis.set(xlabel='Year', ylabel='Air Temperature [K]')
         if intv_mean == '10Y':
             figure.suptitle(site_label + 'Ensemble Mean of 10y Air Temperature', fontweight='bold')
-        elif intv_mean == 'Y':
+        elif intv_mean == 'YE':
             figure.suptitle(site_label + 'Ensemble Mean of Annual Air Temperature', fontweight='bold')
-        elif intv_mean == 'M':
+        elif intv_mean == 'ME':
             figure.suptitle(site_label + 'Ensemble Mean of Monthly Air Temperature', fontweight='bold')
         target_plot = axis.plot(target.resample(intv_mean).mean(), linewidth=1.5, c='black',
                                 label=target_label, linestyle='dashed')
@@ -1214,8 +1214,8 @@ def write_cnp_output(temp_dict: dict, prec_dict: dict, output: str, climate_id: 
             )
             daily_cnp.to_csv(os.path.join(scenario_dir, f'{member}_daily.csv'), index=False)
 
-            monthly_temp = daily_temp.resample('M').mean().round(ndigits)
-            monthly_prec = daily_prec.resample('M').sum().round(ndigits)
+            monthly_temp = daily_temp.resample('ME').mean().round(ndigits)
+            monthly_prec = daily_prec.resample('ME').sum().round(ndigits)
             monthly_cnp = to_cnp_dataframe(
                 index=monthly_temp.index,
                 temperature_series=monthly_temp.values,
@@ -1385,7 +1385,7 @@ class ClimateScenarios:
 
     def data_checks(self):
         self.temp_cmip, self.prec_cmip = apply_filters(self.temp_cmip, self.prec_cmip, zscore_threshold=3,
-                                                          jump_threshold=5, resampling_rate='Y')
+                                                          jump_threshold=5, resampling_rate='YE')
         print(f'Consistency-checks applied to adjusted data for "{self.station}".')
 
         process_nested_dict(self.temp_cmip, round, ndigits=3)
@@ -1406,18 +1406,18 @@ class ClimateScenarios:
                               title=f'"{self.station}" - 5y Rolling Mean of Annual Air Temperature',
                               target_label='Observations',
                               filename=f'cmip6_bias_adjustment_{self.station}_temperature.png', show=self.show,
-                              intv_mean='Y', rolling=5, out_dir=self.output + 'Plots/')
+                              intv_mean='YE', rolling=5, out_dir=self.output + 'Plots/')
         cmip_plot_combined(data=self.prec_cmip, target=self.aws.dropna(),
                               title=f'"{self.station}" - 5y Rolling Mean of Annual Precipitation', precip=True,
                               target_label='Observations',
                               filename=f'cmip6_bias_adjustment_{self.station}_precipitation.png', show=self.show,
-                              intv_sum='Y', rolling=5, out_dir=self.output + 'Plots/')
+                              intv_sum='YE', rolling=5, out_dir=self.output + 'Plots/')
         print(f'Figures for CMIP6 bias adjustment for "{self.station}" created.')
 
-        cmip_plot_ensemble(self.temp_cmip, self.aws['temp'], intv_mean='Y', show=self.show,
+        cmip_plot_ensemble(self.temp_cmip, self.aws['temp'], intv_mean='YE', show=self.show,
                               out_dir=self.output + 'Plots/', target_label="Observations",
                               filename=f'cmip6_ensemble_{self.station}', site_label=self.station)
-        cmip_plot_ensemble(self.prec_cmip, self.aws['prec'].dropna(), precip=True, intv_sum='Y', show=self.show,
+        cmip_plot_ensemble(self.prec_cmip, self.aws['prec'].dropna(), precip=True, intv_sum='YE', show=self.show,
                               out_dir=self.output + 'Plots/', target_label="Observations", site_label=self.station,
                               filename=f'cmip6_ensemble_{self.station}')
         print(f'Figures for CMIP6 ensembles for "{self.station}" created.')
