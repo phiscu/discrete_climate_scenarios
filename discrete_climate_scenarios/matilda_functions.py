@@ -674,12 +674,20 @@ class CMIP6DataProcessor:
         self.ssp5_pr = adjust_bias(predictand=self.ssp5_pr_raw, predictor=aws, era5=False, train_start=train_start_prec,
                                    train_end=train_end_prec)
 
+        self.ssp2_pr = enforce_non_negative_precipitation(self.ssp2_pr)
+        self.ssp5_pr = enforce_non_negative_precipitation(self.ssp5_pr)
+
         self.ssp_tas_dict = {'SSP2_raw': self.ssp2_tas_raw, 'SSP2_adjusted': self.ssp2_tas,
                              'SSP5_raw': self.ssp5_tas_raw, 'SSP5_adjusted': self.ssp5_tas}
         self.ssp_pr_dict = {'SSP2_raw': self.ssp2_pr_raw, 'SSP2_adjusted': self.ssp2_pr, 'SSP5_raw': self.ssp5_pr_raw,
                             'SSP5_adjusted': self.ssp5_pr}
 
         print('Done!')
+
+
+def enforce_non_negative_precipitation(df):
+    '''Set negative precipitation values to zero.'''
+    return df.clip(lower=0)
 
 
 def dict_filter(dictionary, filter_string):
