@@ -7,6 +7,8 @@ from bias_correction import BiasCorrection
 import seaborn as sns
 from matplotlib.legend import Legend
 import probscale
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from shapely.geometry import Point
@@ -147,7 +149,8 @@ def plot_region_data(region_data, show=True, output=None):
     aws_list = [search_dict(region_data, station) for station in aws_names]
 
     fig, axs = plt.subplots(len(aws_names), 1, figsize=(10, 20), sharex=True)
-
+    axs = np.atleast_1d(axs).ravel()
+    
     for i, (aws_data, aws_name) in enumerate(zip(aws_list, aws_names)):
         ax = axs[i]
         plot_meteo(ax, aws_data, aws_name)
@@ -257,49 +260,33 @@ def custom_buffer(point, buffer_radius_meters):
 
 
 def create_buffer(station_coords, output, buffer_radius=1000, write_files=True):
-    """
-    Create spatial buffers around station coordinates and save them in a GeoPackage (.gpkg) file.
-
-    Args:
-    - station_coords (dict): Dictionary containing station coordinates for each region.
-    - output (str): Path where the GeoPackage file will be saved.
-    - buffer_radius (float): Radius of the buffer in degrees (or any appropriate unit).
-    """
-    # Create an empty GeoDataFrame to store the buffers
-    buffer_gdf = gpd.GeoDataFrame(columns=['Station_Name', 'geometry'])
-
-    # Create an empty GeoDataFrame to store the station locations
-    locations_gdf = gpd.GeoDataFrame(columns=['Station_Name', 'geometry'])
-
+    buffer_rows = []
+    location_rows = []
     buffer_dict = {}
 
-    # Iterate over each region
     for region, stations in station_coords.items():
         region_buffers = {}
-        # Iterate over each station in the region
         for station_name, coordinates in stations.items():
-            # Create a buffer around the station coordinates
             buffer_geom = custom_buffer(coordinates, buffer_radius)
             region_buffers[station_name] = buffer_geom
 
-            # Add the buffer geometry to the GeoDataFrame
-            buffer_gdf = buffer_gdf.append({'Station_Name': station_name,
-                                            'geometry': buffer_geom}, ignore_index=True)
+            buffer_rows.append({"Station_Name": station_name, "geometry": buffer_geom})
 
-            # Create a point geometry for station location
             point_geom = Point(coordinates)
+            location_rows.append({"Station_Name": station_name, "geometry": point_geom})
 
-            # Add the point geometry to the GeoDataFrame
-            locations_gdf = locations_gdf.append({'Station_Name': station_name,
-                                                  'geometry': point_geom}, ignore_index=True)
         buffer_dict[region] = region_buffers
 
-    # Save the GeoDataFrames to a GeoPackage file
+    # assuming lon/lat input coordinates
+    buffer_gdf = gpd.GeoDataFrame(buffer_rows, geometry="geometry", crs="EPSG:4326")
+    locations_gdf = gpd.GeoDataFrame(location_rows, geometry="geometry", crs="EPSG:4326")
+
     if write_files:
-        buffer_gdf.to_file(output, driver='GPKG', layer='station_buffers')
-        locations_gdf.to_file(output, driver='GPKG', layer='station_locations')
+        buffer_gdf.to_file(output, driver="GPKG", layer="station_buffers")
+        locations_gdf.to_file(output, driver="GPKG", layer="station_locations")
 
     return buffer_dict
+
 
 
 class CMIPDownloader:
@@ -343,10 +330,12 @@ class CMIPDownloader:
                 """Create and image collection of CMIP6 data for the requested variable, period, and region.
                 [Server side]"""
 
-                collection = ee.ImageCollection('NASA/GDDP-CMIP6') \
-                    .select(var) \
-                    .filterDate(startDate, endDate) \
+                collection = (ee.ImageCollection('NASA/GDDP-CMIP6')
+                    .select(var)
+                    .filterDate(startDate, endDate)
+                    .filter(ee.Filter.neq('model', 'NorESM2-LM'))
                     .filterBounds(self.shape)
+                    )
                 return collection
 
             def renameBandName(b):
@@ -574,9 +563,9 @@ def adjust_bias(predictand, predictor, era5=True, train_start='1979-01-01', trai
             data_corr[col] = corrected_col.loc[extraction_slice]
 
         # Append the corrected data to the main dataframe
-        corrected_data = corrected_data.append(data_corr, ignore_index=False)
+        corrected_data = pd.concat([corrected_data, data_corr], axis=0)
 
-    return corrected_data
+    return corrected_data.sort_index()
 
 
 class CMIP6DataProcessor:
@@ -1135,9 +1124,9 @@ def pp_matrix(original, target, corrected, scenario=None, nrow=7, ncol=5, precip
         var = 'Precipitation'
         var_label = 'Monthly ' + var
         unit = ' [mm]'
-        original = original.resample('M').sum()
-        target = target.resample('M').sum()
-        corrected = corrected.resample('M').sum()
+        original = original.resample('ME').sum()
+        target = target.resample('ME').sum()
+        corrected = corrected.resample('ME').sum()
     else:
         var = 'Temperature'
         var_label = 'Daily Mean ' + var
