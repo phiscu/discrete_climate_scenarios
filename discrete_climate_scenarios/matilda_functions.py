@@ -192,6 +192,13 @@ def remove_outliers(series, sd_factor=2):
     return series
 
 
+def remove_temperature_outliers(df, sd_factor=2):
+    """Apply outlier filtering only to the temperature column of a station dataframe."""
+    if 'temp' in df.columns:
+        df['temp'] = remove_outliers(df['temp'].copy(), sd_factor=sd_factor)
+    return df
+    
+    
 def process_nested_dict(d, func, *args, **kwargs):
     for key, value in d.items():
         if isinstance(value, pd.DataFrame):
@@ -1339,7 +1346,7 @@ class StationPreprocessor:
                             output=self.output_dir + 'overview_plots/aws_data_raw.png')
 
         # Remove temperature outliers
-        process_nested_dict(self.region_data, remove_outliers, sd_factor=self.sd_factor)
+        process_nested_dict(self.region_data, remove_temperature_outliers, sd_factor=self.sd_factor)
 
         # Remove years with an annual precipitation of 0
         process_nested_dict(self.region_data, remove_annual_zeros)
