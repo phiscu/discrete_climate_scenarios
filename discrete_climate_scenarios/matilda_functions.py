@@ -7,6 +7,8 @@ from bias_correction import BiasCorrection
 import seaborn as sns
 from matplotlib.legend import Legend
 import probscale
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from shapely.geometry import Point
@@ -22,7 +24,32 @@ import pickle
 warnings.filterwarnings("ignore")
 
 
-def read_station_data(directory_path):
+def read_station_data(directory_path, single_station_coords=None):
+    if os.path.isfile(directory_path) and directory_path.lower().endswith('.csv'):
+        single_df = pd.read_csv(directory_path)
+        required_cols = {'date', 'temp', 'prec'}
+        missing_cols = required_cols.difference(single_df.columns)
+        if missing_cols:
+            raise ValueError(
+                'Single-file CSV input must include the columns: date,temp,prec. '
+                f'Missing columns: {sorted(missing_cols)}'
+            )
+
+        single_df['date'] = pd.to_datetime(single_df['date'])
+        single_df.set_index('date', inplace=True)
+        single_df['temp'] = pd.to_numeric(single_df['temp'], errors='coerce') + 273.15
+        single_df['prec'] = pd.to_numeric(single_df['prec'], errors='coerce').fillna(0)
+
+        station_name = os.path.splitext(os.path.basename(directory_path))[0]
+        region_name = 'single_region'
+        region_data = {region_name: {station_name: single_df[['temp', 'prec']]}}
+
+        station_coords = {region_name: {}}
+        if single_station_coords is not None:
+            station_coords[region_name][station_name] = single_station_coords
+
+        return region_data, station_coords
+
     region_data = {}
     station_coords = {}
 
@@ -122,7 +149,8 @@ def plot_region_data(region_data, show=True, output=None):
     aws_list = [search_dict(region_data, station) for station in aws_names]
 
     fig, axs = plt.subplots(len(aws_names), 1, figsize=(10, 20), sharex=True)
-
+    axs = np.atleast_1d(axs).ravel()
+    
     for i, (aws_data, aws_name) in enumerate(zip(aws_list, aws_names)):
         ax = axs[i]
         plot_meteo(ax, aws_data, aws_name)
@@ -164,6 +192,13 @@ def remove_outliers(series, sd_factor=2):
     return series
 
 
+def remove_temperature_outliers(df, sd_factor=2):
+    """Apply outlier filtering only to the temperature column of a station dataframe."""
+    if 'temp' in df.columns:
+        df['temp'] = remove_outliers(df['temp'].copy(), sd_factor=sd_factor)
+    return df
+    
+    
 def process_nested_dict(d, func, *args, **kwargs):
     for key, value in d.items():
         if isinstance(value, pd.DataFrame):
@@ -232,49 +267,33 @@ def custom_buffer(point, buffer_radius_meters):
 
 
 def create_buffer(station_coords, output, buffer_radius=1000, write_files=True):
-    """
-    Create spatial buffers around station coordinates and save them in a GeoPackage (.gpkg) file.
-
-    Args:
-    - station_coords (dict): Dictionary containing station coordinates for each region.
-    - output (str): Path where the GeoPackage file will be saved.
-    - buffer_radius (float): Radius of the buffer in degrees (or any appropriate unit).
-    """
-    # Create an empty GeoDataFrame to store the buffers
-    buffer_gdf = gpd.GeoDataFrame(columns=['Station_Name', 'geometry'])
-
-    # Create an empty GeoDataFrame to store the station locations
-    locations_gdf = gpd.GeoDataFrame(columns=['Station_Name', 'geometry'])
-
+    buffer_rows = []
+    location_rows = []
     buffer_dict = {}
 
-    # Iterate over each region
     for region, stations in station_coords.items():
         region_buffers = {}
-        # Iterate over each station in the region
         for station_name, coordinates in stations.items():
-            # Create a buffer around the station coordinates
             buffer_geom = custom_buffer(coordinates, buffer_radius)
             region_buffers[station_name] = buffer_geom
 
-            # Add the buffer geometry to the GeoDataFrame
-            buffer_gdf = buffer_gdf.append({'Station_Name': station_name,
-                                            'geometry': buffer_geom}, ignore_index=True)
+            buffer_rows.append({"Station_Name": station_name, "geometry": buffer_geom})
 
-            # Create a point geometry for station location
             point_geom = Point(coordinates)
+            location_rows.append({"Station_Name": station_name, "geometry": point_geom})
 
-            # Add the point geometry to the GeoDataFrame
-            locations_gdf = locations_gdf.append({'Station_Name': station_name,
-                                                  'geometry': point_geom}, ignore_index=True)
         buffer_dict[region] = region_buffers
 
-    # Save the GeoDataFrames to a GeoPackage file
+    # assuming lon/lat input coordinates
+    buffer_gdf = gpd.GeoDataFrame(buffer_rows, geometry="geometry", crs="EPSG:4326")
+    locations_gdf = gpd.GeoDataFrame(location_rows, geometry="geometry", crs="EPSG:4326")
+
     if write_files:
-        buffer_gdf.to_file(output, driver='GPKG', layer='station_buffers')
-        locations_gdf.to_file(output, driver='GPKG', layer='station_locations')
+        buffer_gdf.to_file(output, driver="GPKG", layer="station_buffers")
+        locations_gdf.to_file(output, driver="GPKG", layer="station_locations")
 
     return buffer_dict
+
 
 
 class CMIPDownloader:
@@ -318,10 +337,12 @@ class CMIPDownloader:
                 """Create and image collection of CMIP6 data for the requested variable, period, and region.
                 [Server side]"""
 
-                collection = ee.ImageCollection('NASA/GDDP-CMIP6') \
-                    .select(var) \
-                    .filterDate(startDate, endDate) \
+                collection = (ee.ImageCollection('NASA/GDDP-CMIP6')
+                    .select(var)
+                    .filterDate(startDate, endDate)
+                    .filter(ee.Filter.neq('model', 'NorESM2-LM'))
                     .filterBounds(self.shape)
+                    )
                 return collection
 
             def renameBandName(b):
@@ -549,9 +570,9 @@ def adjust_bias(predictand, predictor, era5=True, train_start='1979-01-01', trai
             data_corr[col] = corrected_col.loc[extraction_slice]
 
         # Append the corrected data to the main dataframe
-        corrected_data = corrected_data.append(data_corr, ignore_index=False)
+        corrected_data = pd.concat([corrected_data, data_corr], axis=0)
 
-    return corrected_data
+    return corrected_data.sort_index()
 
 
 class CMIP6DataProcessor:
@@ -660,12 +681,20 @@ class CMIP6DataProcessor:
         self.ssp5_pr = adjust_bias(predictand=self.ssp5_pr_raw, predictor=aws, era5=False, train_start=train_start_prec,
                                    train_end=train_end_prec)
 
+        self.ssp2_pr = enforce_non_negative_precipitation(self.ssp2_pr)
+        self.ssp5_pr = enforce_non_negative_precipitation(self.ssp5_pr)
+
         self.ssp_tas_dict = {'SSP2_raw': self.ssp2_tas_raw, 'SSP2_adjusted': self.ssp2_tas,
                              'SSP5_raw': self.ssp5_tas_raw, 'SSP5_adjusted': self.ssp5_tas}
         self.ssp_pr_dict = {'SSP2_raw': self.ssp2_pr_raw, 'SSP2_adjusted': self.ssp2_pr, 'SSP5_raw': self.ssp5_pr_raw,
                             'SSP5_adjusted': self.ssp5_pr}
 
         print('Done!')
+
+
+def enforce_non_negative_precipitation(df):
+    '''Set negative precipitation values to zero.'''
+    return df.clip(lower=0)
 
 
 def dict_filter(dictionary, filter_string):
@@ -858,7 +887,7 @@ def dict_to_pickle(dic, target_path):
         pickle.dump(dic, f)
 
 
-def cmip_plot(ax, df, target, title=None, precip=False, intv_sum='M', intv_mean='10Y',
+def cmip_plot(ax, df, target, title=None, precip=False, intv_sum='ME', intv_mean='10Y',
               target_label='Target', show_target_label=False, rolling=None):
     """Resamples and plots climate model and target data."""
     if intv_mean == '10Y' or intv_mean == '5Y' or intv_mean == '20Y':
@@ -885,7 +914,7 @@ def cmip_plot(ax, df, target, title=None, precip=False, intv_sum='M', intv_mean=
     ax.grid(True)
 
 
-def cmip_plot_combined(data, target, title=None, precip=False, intv_sum='M', intv_mean='10Y',
+def cmip_plot_combined(data, target, title=None, precip=False, intv_sum='ME', intv_mean='10Y',
                        target_label='Target', show=False, filename=None, out_dir='./', rolling=None):
     """Combines multiple subplots of climate data in different scenarios before and after bias adjustment.
     Shows target data for comparison"""
@@ -921,7 +950,7 @@ def cmip_plot_combined(data, target, title=None, precip=False, intv_sum='M', int
             plt.show()
 
 
-def df2long(df, intv_sum='M', intv_mean='Y', precip=False):
+def df2long(df, intv_sum='ME', intv_mean='YE', precip=False):
     """Resamples dataframes and converts them into long format to be passed to seaborn.lineplot()."""
 
     if precip:
@@ -935,7 +964,7 @@ def df2long(df, intv_sum='M', intv_mean='Y', precip=False):
     return df
 
 
-def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', figsize=(10, 6), site_label:str=None,
+def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='ME', intv_mean='YE', figsize=(10, 6), site_label:str=None,
                        target_label='ERA5L', show=True, out_dir='./', filename='cmip6_ensemble'):
     """
     Plots the multi-model mean of climate scenarios including the 90% confidence interval.
@@ -949,9 +978,9 @@ def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', 
     precip: bool
         If True, plot the mean precipitation. If False, plot the mean temperature. Default is False.
     intv_sum: str
-        Interval for precipitation sums. Default is monthly ('M').
+        Interval for precipitation sums. Default is monthly ('ME').
     intv_mean: str
-        Interval for the mean of temperature data or precipitation sums. Default is annual ('Y').
+        Interval for the mean of temperature data or precipitation sums. Default is annual ('YE').
     figsize: tuple
         Figure size for the plot. Default is (10,6).
     show: bool
@@ -978,9 +1007,9 @@ def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', 
             df = df2long(cmip[i], intv_sum=intv_sum, intv_mean=intv_mean, precip=True)
             sns.lineplot(data=df, x='TIMESTAMP', y='prec', color=col_dict[i])
         axis.set(xlabel='Year', ylabel='Precipitation [mm]')
-        if intv_sum == 'M':
+        if intv_sum == 'ME':
             figure.suptitle(site_label + 'Ensemble Mean of Monthly Precipitation', fontweight='bold')
-        elif intv_sum == 'Y':
+        elif intv_sum == 'YE':
             figure.suptitle(site_label + 'Ensemble Mean of Annual Precipitation', fontweight='bold')
         target_plot = axis.plot(target.resample(intv_sum).sum(), linewidth=1.5, c='black',
                                 label=target_label, linestyle='dashed')
@@ -991,9 +1020,9 @@ def cmip_plot_ensemble(cmip, target, precip=False, intv_sum='M', intv_mean='Y', 
         axis.set(xlabel='Year', ylabel='Air Temperature [K]')
         if intv_mean == '10Y':
             figure.suptitle(site_label + 'Ensemble Mean of 10y Air Temperature', fontweight='bold')
-        elif intv_mean == 'Y':
+        elif intv_mean == 'YE':
             figure.suptitle(site_label + 'Ensemble Mean of Annual Air Temperature', fontweight='bold')
-        elif intv_mean == 'M':
+        elif intv_mean == 'ME':
             figure.suptitle(site_label + 'Ensemble Mean of Monthly Air Temperature', fontweight='bold')
         target_plot = axis.plot(target.resample(intv_mean).mean(), linewidth=1.5, c='black',
                                 label=target_label, linestyle='dashed')
@@ -1110,9 +1139,9 @@ def pp_matrix(original, target, corrected, scenario=None, nrow=7, ncol=5, precip
         var = 'Precipitation'
         var_label = 'Monthly ' + var
         unit = ' [mm]'
-        original = original.resample('M').sum()
-        target = target.resample('M').sum()
-        corrected = corrected.resample('M').sum()
+        original = original.resample('ME').sum()
+        target = target.resample('ME').sum()
+        corrected = corrected.resample('ME').sum()
     else:
         var = 'Temperature'
         var_label = 'Daily Mean ' + var
@@ -1147,6 +1176,62 @@ def pp_matrix(original, target, corrected, scenario=None, nrow=7, ncol=5, precip
 
     if show:
         plt.show()
+
+
+def to_cnp_dataframe(index, temperature_series, precipitation_series, climate_id, monthly=False):
+    cnp_df = pd.DataFrame({
+        'climate_id': climate_id,
+        'dd': '' if monthly else index.day,
+        'mm': index.month,
+        'yr': index.year,
+        'temperature': temperature_series,
+        'precipitation': precipitation_series
+    })
+    return cnp_df
+
+
+def write_cnp_output(temp_dict: dict, prec_dict: dict, output: str, climate_id: int, ndigits: int = 3):
+    cnp_base_dir = f'{output}posterior/CNP-Input/'
+    os.makedirs(cnp_base_dir, exist_ok=True)
+
+    scenario_map = {
+        'SSP2': ('SSP2_adjusted', 'SSP2_adjusted'),
+        'SSP5': ('SSP5_adjusted', 'SSP5_adjusted')
+    }
+
+    for scenario, (temp_key, prec_key) in scenario_map.items():
+        temp_df = temp_dict[temp_key]
+        prec_df = prec_dict[prec_key]
+
+        scenario_dir = os.path.join(cnp_base_dir, scenario)
+        os.makedirs(scenario_dir, exist_ok=True)
+
+        shared_members = sorted(set(temp_df.columns).intersection(set(prec_df.columns)))
+
+        for member in shared_members:
+            daily_temp = (temp_df[member] - 273.15).round(ndigits)
+            daily_prec = prec_df[member].round(ndigits)
+
+            daily_cnp = to_cnp_dataframe(
+                index=daily_temp.index,
+                temperature_series=daily_temp.values,
+                precipitation_series=daily_prec.values,
+                climate_id=climate_id,
+                monthly=False
+            )
+            daily_cnp.to_csv(os.path.join(scenario_dir, f'{member}_daily.csv'), index=False)
+
+            monthly_temp = daily_temp.resample('ME').mean().round(ndigits)
+            monthly_prec = daily_prec.resample('ME').sum().round(ndigits)
+            monthly_cnp = to_cnp_dataframe(
+                index=monthly_temp.index,
+                temperature_series=monthly_temp.values,
+                precipitation_series=monthly_prec.values,
+                climate_id=climate_id,
+                monthly=True
+            )
+            monthly_cnp.to_csv(os.path.join(scenario_dir, f'{member}_monthly.csv'), index=False)
+
 
 
 def write_output(adj_dict: dict, output: str, station: str, starty: str, endy: str, type: str, ndigits: int=3):
@@ -1232,7 +1317,8 @@ def summary_dict(results_dict: dict):
 
 
 class StationPreprocessor:
-    def __init__(self, input_dir, output_dir, buffer_radius=1000, show=True, sd_factor=2):
+    def __init__(self, input_dir, output_dir, buffer_radius=1000, show=True, sd_factor=2,
+                 single_station_coords=None):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.buffer_radius = buffer_radius
@@ -1240,9 +1326,15 @@ class StationPreprocessor:
         self.sd_factor = sd_factor
         self.gis_dir = self.output_dir + 'GIS/'
         self.gis_file = self.gis_dir + 'station_gis.gpkg'
+        self.single_station_coords = single_station_coords
 
     def read_data_and_create_buffers(self):
-        self.region_data, self.station_coords = read_station_data(self.input_dir)
+        self.region_data, self.station_coords = read_station_data(self.input_dir, self.single_station_coords)
+        if not any(stations for stations in self.station_coords.values()):
+            raise ValueError(
+                'No station coordinates found. For directory-based input, provide aws_coords.csv per region. '
+                'For single CSV input, set single_station_lat and single_station_lon in config.ini.'
+            )
         if not os.path.exists(self.gis_dir):
             os.makedirs(self.gis_dir)
         self.buffered_stations = create_buffer(self.station_coords, self.gis_file, buffer_radius=self.buffer_radius,
@@ -1254,7 +1346,7 @@ class StationPreprocessor:
                             output=self.output_dir + 'overview_plots/aws_data_raw.png')
 
         # Remove temperature outliers
-        process_nested_dict(self.region_data, remove_outliers, sd_factor=self.sd_factor)
+        process_nested_dict(self.region_data, remove_temperature_outliers, sd_factor=self.sd_factor)
 
         # Remove years with an annual precipitation of 0
         process_nested_dict(self.region_data, remove_annual_zeros)
@@ -1270,7 +1362,7 @@ class StationPreprocessor:
 
 class ClimateScenarios:
     def __init__(self, output, region_data, station, buffer_file, download=False, load_backup=True, show=True,
-                 starty=1979, endy=2100, processes=5):
+                 starty=1979, endy=2100, processes=5, cnp_format=True, cnp_climate_id=999):
         self.output = output
         self.download = download
         self.load_backup = load_backup
@@ -1282,6 +1374,8 @@ class ClimateScenarios:
         self.region_data = region_data
         self.processes = processes
         self.aws = search_dict(self.region_data, self.station)
+        self.cnp_format = cnp_format
+        self.cnp_climate_id = cnp_climate_id
 
     def cmip6_data_processing(self):
         cmip_dir = f'{self.output}raw/'
@@ -1298,7 +1392,7 @@ class ClimateScenarios:
 
     def data_checks(self):
         self.temp_cmip, self.prec_cmip = apply_filters(self.temp_cmip, self.prec_cmip, zscore_threshold=3,
-                                                          jump_threshold=5, resampling_rate='Y')
+                                                          jump_threshold=5, resampling_rate='YE')
         print(f'Consistency-checks applied to adjusted data for "{self.station}".')
 
         process_nested_dict(self.temp_cmip, round, ndigits=3)
@@ -1319,18 +1413,18 @@ class ClimateScenarios:
                               title=f'"{self.station}" - 5y Rolling Mean of Annual Air Temperature',
                               target_label='Observations',
                               filename=f'cmip6_bias_adjustment_{self.station}_temperature.png', show=self.show,
-                              intv_mean='Y', rolling=5, out_dir=self.output + 'Plots/')
+                              intv_mean='YE', rolling=5, out_dir=self.output + 'Plots/')
         cmip_plot_combined(data=self.prec_cmip, target=self.aws.dropna(),
                               title=f'"{self.station}" - 5y Rolling Mean of Annual Precipitation', precip=True,
                               target_label='Observations',
                               filename=f'cmip6_bias_adjustment_{self.station}_precipitation.png', show=self.show,
-                              intv_sum='Y', rolling=5, out_dir=self.output + 'Plots/')
+                              intv_sum='YE', rolling=5, out_dir=self.output + 'Plots/')
         print(f'Figures for CMIP6 bias adjustment for "{self.station}" created.')
 
-        cmip_plot_ensemble(self.temp_cmip, self.aws['temp'], intv_mean='Y', show=self.show,
+        cmip_plot_ensemble(self.temp_cmip, self.aws['temp'], intv_mean='YE', show=self.show,
                               out_dir=self.output + 'Plots/', target_label="Observations",
                               filename=f'cmip6_ensemble_{self.station}', site_label=self.station)
-        cmip_plot_ensemble(self.prec_cmip, self.aws['prec'].dropna(), precip=True, intv_sum='Y', show=self.show,
+        cmip_plot_ensemble(self.prec_cmip, self.aws['prec'].dropna(), precip=True, intv_sum='YE', show=self.show,
                               out_dir=self.output + 'Plots/', target_label="Observations", site_label=self.station,
                               filename=f'cmip6_ensemble_{self.station}')
         print(f'Figures for CMIP6 ensembles for "{self.station}" created.')
@@ -1365,6 +1459,10 @@ class ClimateScenarios:
         prec_summary = summary_dict(self.prec_cmip)
         write_output(temp_summary, self.output, self.station, self.starty, self.endy, type='summary')
         write_output(prec_summary, self.output, self.station, self.starty, self.endy, type='summary')
+
+        if self.cnp_format:
+            write_cnp_output(self.temp_cmip, self.prec_cmip, self.output, climate_id=self.cnp_climate_id)
+
         print(f'Output files for "{self.station}" written.')
 
     def complete_workflow(self):
